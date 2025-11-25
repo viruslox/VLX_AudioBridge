@@ -5,7 +5,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/hraban/opus"
-	"github.com/viruslox/VLX_AudioBridge/internal/config"
+	"VLX_AudioBridge/internal/config"
 )
 
 type Manager struct {
