@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/viruslox/VLX_AudioBridge/internal/config"
-	"github.com/viruslox/VLX_AudioBridge/internal/overlay"
-	"github.com/viruslox/VLX_AudioBridge/internal/stream"
+	"VLX_AudioBridge/internal/config"
+	"VLX_AudioBridge/internal/overlay"
+	"VLX_AudioBridge/internal/stream"
 )
 
 type Bot struct {
