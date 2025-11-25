@@ -6,29 +6,25 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/viruslox/VLX_AudioBridge/internal/config"
-	"github.com/viruslox/VLX_AudioBridge/internal/overlay"
-	"github.com/viruslox/VLX_AudioBridge/internal/stream"
+	"VLX_AudioBridge/internal/config"
+	"VLX_AudioBridge/internal/overlay"
+	"VLX_AudioBridge/internal/stream"
 )
 
 type Bot struct {
 	Session       *discordgo.Session
 	Config        config.DiscordConfig
 	StreamManager *stream.Manager
-
-	// State tracking
 	VoiceConnection *discordgo.VoiceConnection
-	StopCaptureChan chan struct{} // Signal channel to stop overlay audio capture
+	StopCaptureChan chan struct{}
 }
 
-// New creates a new instance of the Bot
 func New(cfg config.DiscordConfig, sm *stream.Manager) (*Bot, error) {
 	dg, err := discordgo.New("Bot " + cfg.Token)
 	if err != nil {
 		return nil, fmt.Errorf("error creating discord session: %w", err)
 	}
 
-	// Set required intents
 	dg.Identify.Intents = discordgo.IntentsGuildMessages |
 		discordgo.IntentsGuildVoiceStates |
 		discordgo.IntentsGuildMembers
@@ -39,7 +35,6 @@ func New(cfg config.DiscordConfig, sm *stream.Manager) (*Bot, error) {
 		StreamManager: sm,
 	}
 
-	// Register Handlers
 	dg.AddHandler(b.onReady)
 	dg.AddHandler(b.onMessageCreate)
 	dg.AddHandler(b.onVoiceSpeakingUpdate)
