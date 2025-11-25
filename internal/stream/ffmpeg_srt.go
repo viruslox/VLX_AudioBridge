@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"strings"
 
-	"github.com/viruslox/VLX_AudioBridge/internal/config"
+	"VLX_AudioBridge/internal/config"
 )
 
 type FFmpegProcess struct {
