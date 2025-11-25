@@ -2,7 +2,6 @@ package stream
 
 import (
 	"encoding/binary"
-	"math"
 	"sync"
 	"time"
 )
