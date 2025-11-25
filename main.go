@@ -15,51 +15,51 @@ import (
 )
 
 func main() {
-	// 1. Command line parsing
-	configPath := flag.String("config", "AudioBridge.yaml", "Conf file path")
+	// 1. Command line argument parsing
+	configPath := flag.String("config", "AudioBridge.yaml", "Configuration file path")
 	flag.Parse()
 
-	// 2. Load config
-	log.Println("[INFO]: Loading config")
+	// 2. Load Configuration
+	log.Println("[INFO]: Loading configuration...")
 	if err := config.LoadConfig(*configPath); err != nil {
 		log.Fatalf("[ERR]: Critical error loading config: %v", err)
 	}
 
-	// 3. System setup
-	log.Println("[INFO]: Checking pipewire status")
+	// 3. System Setup (Pipewire Check & Virtual Sink)
+	log.Println("[INFO]: Verifying audio system status...")
 	if err := system.SetupPipewire(); err != nil {
-		log.Fatalf("[ERR]: Pipewire setup error: %v", err)
+		log.Fatalf("[ERR]: Pipewire setup failed: %v", err)
 	}
 
-	// 4. Overlay Module
-	log.Println("[INFO]: Loading overlay manager")
-	// Qui chiamiamo Start (che ora esiste in browser_manager.go)
+	// 4. Initialize Overlay Module (Headless Browsers)
+	log.Println("[INFO]: Initializing overlay manager...")
 	if err := overlay.Start(config.Cfg.Overlays.URLs); err != nil {
-		log.Fatalf("[ERR]: Error loading overlay: %v", err)
+		log.Fatalf("[ERR]: Failed to start overlays: %v", err)
 	}
+	// Ensure browsers are closed on exit
 	defer overlay.Stop()
 
-	// 5. Launch streaming
+	// 5. Initialize Streaming Manager (FFmpeg SRT)
 	streamManager := stream.NewManager(config.Cfg.Streaming)
 
-	// 6. Discord bot
-	log.Println("[INFO]: Launching Discord bot")
+	// 6. Initialize and Launch Discord Bot
+	log.Println("[INFO]: Launching Discord bot...")
 	discordBot, err := bot.New(config.Cfg.Discord, streamManager)
 	if err != nil {
-		log.Fatalf("[ERR]: Failed connecting Discord bot: %v", err)
+		log.Fatalf("[ERR]: Failed to create Discord bot instance: %v", err)
 	}
 
 	if err := discordBot.Open(); err != nil {
-		log.Fatalf("[ERR]: Failed connecting to Discord: %v", err)
+		log.Fatalf("[ERR]: Failed to connect to Discord: %v", err)
 	}
 	defer discordBot.Close()
 
-	log.Println("[INFO]: VLX_AudioBridge is ON! Press CTRL+C to kill it.")
+	log.Println("[INFO]: VLX_AudioBridge is running. Press CTRL+C to exit.")
 
-	// 7. Graceful Shutdown
+	// 7. Await Shutdown Signal (Graceful Shutdown)
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
 
-	log.Println("[INFO]: Received closure signal, shutting down")
+	log.Println("[INFO]: Shutdown signal received. Exiting...")
 }
