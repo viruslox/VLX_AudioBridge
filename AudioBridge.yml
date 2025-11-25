@@ -1,0 +1,20 @@
+discord:
+  token: "YOUR_DISCORD_BOT_TOKEN"
+  prefix: "vlx."       # Commands prefix (es. !join, !leave)
+  guild_id: ""         # Optional, but suggested: Restrict to specific Guild ID
+
+streaming:
+  # SRT Destination (e.g., MediaMTX) # mode=caller to enable "us" as media sender
+  destination_url: "srt://127.0.0.1:8890?streamid=publish:vlx_audio&mode=caller"
+  bitrate: "128k" # Audio output Bitrate for FFmpeg
+  # List of Discord User IDs to exclude from the SRT stream (Max 2)
+  excluded_users:
+    - "123456789012345678"
+    - "987654321098765432"
+
+overlays:
+  # List of Web Overlay URLs to load and inject into Discord (Max 3)
+  urls:
+    - "[https://stream-elements.com/overlay/](https://stream-elements.com/overlay/)..."
+    - "[https://another-overlay.com/](https://another-overlay.com/)..."
+    # - "https://tuo-overlay-3.com"
