@@ -81,7 +81,7 @@ func (m *Mixer) mixTick(out []int16, outBytes []byte) {
 			// Mixing: Summation with Hard Clipping
 			for i := 0; i < len(out) && i < len(currentFrame); i++ {
 				sum := int32(out[i]) + int32(currentFrame[i])
-				
+
 				// Clamp values to int16 range to prevent digital overflow distortion
 				if sum > 32767 {
 					sum = 32767
