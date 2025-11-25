@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Read struct from AudioBridge.yaml
+// Config represents the structure of AudioBridge.yaml
 type Config struct {
 	Discord   DiscordConfig   `yaml:"discord"`
 	Streaming StreamingConfig `yaml:"streaming"`
