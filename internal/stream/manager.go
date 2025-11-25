@@ -5,7 +5,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/hraban/opus"
-	"github.com/viruslox/VLX_AudioBridge/internal/config"
+	"VLX_AudioBridge/internal/config"
 )
 
 type Manager struct {
@@ -103,7 +103,7 @@ func (m *Manager) HandlePacket(p *discordgo.Packet) {
 	}
 
 	// 3. Send decoded PCM to Mixer
-	m.mixer.AddFrame(p.SSRC, pcmBuffer[:n*2]) 
+	m.mixer.AddFrame(p.SSRC, pcmBuffer[:n*2])
 }
 
 // SetUserSSRC updates the mapping between an SSRC and a UserID.
