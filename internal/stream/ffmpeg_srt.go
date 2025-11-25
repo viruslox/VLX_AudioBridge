@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"VLX_AudioBridge/internal/config"
+	"github.com/viruslox/VLX_AudioBridge/internal/config"
 )
 
 type FFmpegProcess struct {
@@ -17,11 +17,12 @@ type FFmpegProcess struct {
 }
 
 func NewFFmpegProcess(cfg config.StreamingConfig) (*FFmpegProcess, error) {
-	// Buildinf FFmpeg command
-	// -f s16le: PCM Signed 16-bit Little Endian (Discord standard decoded)
-	// -ar 48000: Sample rate 48kHz
-	// -ac 2: Stereo chan
-	// -i pipe:0: getting from Stdin
+	// Build FFmpeg command arguments:
+	// -re: Read input at native frame rate (simulates real-time)
+	// -f s16le: Input format PCM Signed 16-bit Little Endian
+	// -ar 48000: Input sample rate
+	// -ac 2: Input channels (Stereo)
+	// -i pipe:0: Read input from Stdin
 	args := []string{
 		"-re",
 		"-f", "s16le",
@@ -38,12 +39,12 @@ func NewFFmpegProcess(cfg config.StreamingConfig) (*FFmpegProcess, error) {
 
 	cmd := exec.Command("ffmpeg", args...)
 
-	// Colleghiamo stderr a stdout del bot per debuggare ffmpeg se serve
+	// Optional: Connect stderr to parent stdout for debugging
 	// cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("errore pipe stdin ffmpeg: %w", err)
+		return nil, fmt.Errorf("failed to create ffmpeg stdin pipe: %w", err)
 	}
 
 	return &FFmpegProcess{
@@ -60,18 +61,19 @@ func (f *FFmpegProcess) Start() error {
 		return err
 	}
 	f.isRunning = true
-	// Monitora uscita prematura
+	
+	// Monitor for premature exit
 	go func() {
 		f.cmd.Wait()
 		f.isRunning = false
-		log.Println("[Stream] Processo FFmpeg terminato.")
+		log.Println("[Stream] FFmpeg process terminated.")
 	}()
 	return nil
 }
 
 func (f *FFmpegProcess) Write(pcmData []byte) (int, error) {
 	if !f.isRunning {
-		return 0, fmt.Errorf("ffmpeg non in esecuzione")
+		return 0, fmt.Errorf("ffmpeg is not running")
 	}
 	return f.stdin.Write(pcmData)
 }
