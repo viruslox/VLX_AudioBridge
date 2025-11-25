@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/viruslox/VLX_AudioBridge/internal/config"
+	"VLX_AudioBridge/internal/config"
 )
 
 type FFmpegProcess struct {
@@ -61,7 +61,7 @@ func (f *FFmpegProcess) Start() error {
 		return err
 	}
 	f.isRunning = true
-	
+
 	// Monitor for premature exit
 	go func() {
 		f.cmd.Wait()
