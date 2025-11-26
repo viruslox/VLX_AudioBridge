@@ -14,11 +14,11 @@ import (
 const (
 	SampleRate      = 48000
 	Channels        = 2
-	FramesPerBuffer = 960 // 20ms at 48kHz
+	FramesPerBuffer = 960 // 20ms audio frame
+	BufferSize      = 50  // Ring buffer size (approx 1s) to mitigate jitter
 )
 
-// CaptureAndStream captures audio from the Virtual Sink Monitor and sends it to Discord.
-// This function blocks until stopChan is closed.
+// CaptureAndStream handles audio capture from system and streaming to Discord.
 func CaptureAndStream(vc *discordgo.VoiceConnection, stopChan <-chan struct{}) error {
 	log.Println("[AudioCapture] Initializing PortAudio...")
 	if err := portaudio.Initialize(); err != nil {
@@ -26,37 +26,56 @@ func CaptureAndStream(vc *discordgo.VoiceConnection, stopChan <-chan struct{}) e
 	}
 	defer portaudio.Terminate()
 
-	// 1. Locate the Monitor device for the Virtual Sink
+	// --- Device Selection Logic ---
 	devices, err := portaudio.Devices()
 	if err != nil {
 		return fmt.Errorf("failed to list audio devices: %w", err)
 	}
 
 	var inputDevice *portaudio.DeviceInfo
-	targetDeviceName := "VLX_VirtualSink.monitor"
+	targetName := "VLX_VirtualSink"
 
 	for _, device := range devices {
-		if strings.Contains(device.Name, targetDeviceName) {
-			inputDevice = device
-			break
+		if device.MaxInputChannels > 0 {
+			// Priority 1: Exact match for our sink monitor
+			if strings.Contains(device.Name, targetName) {
+				inputDevice = device
+				break
+			}
+			// Priority 2: Fallback to generic 'pulse' or 'default' devices
+			if inputDevice == nil && (device.Name == "pulse" || device.Name == "default") {
+				inputDevice = device
+			}
+		}
+	}
+
+	// Priority 3: Last resort fallback
+	if inputDevice == nil && len(devices) > 0 {
+		for _, d := range devices {
+			if d.MaxInputChannels > 0 {
+				inputDevice = d
+				break
+			}
 		}
 	}
 
 	if inputDevice == nil {
-		return fmt.Errorf("virtual sink monitor device '%s' not found", targetDeviceName)
+		return fmt.Errorf("no suitable input device found")
 	}
+	log.Printf("[AudioCapture] Selected device: %s", inputDevice.Name)
 
-	log.Printf("[AudioCapture] Capturing from device: %s", inputDevice.Name)
-
-	// 2. Initialize Opus Encoder (optimized for audio)
+	// --- Encoder Setup ---
 	encoder, err := opus.NewEncoder(SampleRate, Channels, opus.AppAudio)
 	if err != nil {
 		return fmt.Errorf("failed to create Opus encoder: %w", err)
 	}
-	encoder.SetBitrate(96000)
+	encoder.SetBitrate(64000) // 64kbps for stability
 
-	// 3. Initialize Audio Stream in Blocking Mode
-	inputBuffer := make([]float32, FramesPerBuffer*Channels)
+	// --- Ring Buffer Channel ---
+	pcmChan := make(chan []float32, BufferSize)
+
+	// --- PortAudio Stream (Callback Mode) ---
+	// Uses callback to decouple audio capture timing from network timing
 	stream, err := portaudio.OpenStream(portaudio.StreamParameters{
 		Input: portaudio.StreamDeviceParameters{
 			Device:   inputDevice,
@@ -64,49 +83,60 @@ func CaptureAndStream(vc *discordgo.VoiceConnection, stopChan <-chan struct{}) e
 		},
 		SampleRate:      SampleRate,
 		FramesPerBuffer: FramesPerBuffer,
-	}, inputBuffer) 
+	}, func(in []float32) {
+		buf := make([]float32, len(in))
+		copy(buf, in)
+		
+		select {
+		case pcmChan <- buf:
+		default:
+			// Buffer full, dropping packet to maintain real-time stream
+		}
+	})
 
 	if err != nil {
-		return fmt.Errorf("failed to open PortAudio stream: %w", err)
+		return fmt.Errorf("failed to open audio stream: %w", err)
 	}
 	if err := stream.Start(); err != nil {
-		return fmt.Errorf("failed to start stream: %w", err)
+		return fmt.Errorf("failed to start audio stream: %w", err)
 	}
 	defer stream.Close()
 
-	log.Println("[AudioCapture] Stream started. Relaying audio to Discord...")
+	log.Println("[AudioCapture] Streaming active via Jitter Buffer.")
 
-	opusBuffer := make([]byte, 4000) // Max safe opus packet size
-
+	opusBuffer := make([]byte, 4000)
+	silence := make([]float32, FramesPerBuffer*Channels)
+	
+	// --- Transmission Loop (Fixed 20ms Interval) ---
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
-	// 4. Main Capture Loop
 	for {
 		select {
 		case <-stopChan:
-			log.Println("[AudioCapture] Stop signal received. Terminating capture.")
+			log.Println("[AudioCapture] Stop signal received.")
 			return nil
 		case <-ticker.C:
-			// Read raw PCM from PortAudio (Blocking)
-			if err := stream.Read(); err != nil {
-				log.Printf("[AudioCapture] Error reading audio stream: %v", err)
-				continue
+			var frame []float32
+			
+			select {
+			case frame = <-pcmChan:
+				// Audio data available
+			default:
+				// Buffer underrun: send silence to keep UDP connection alive
+				frame = silence
 			}
 
-			// Encode PCM to Opus
-			n, err := encoder.EncodeFloat32(inputBuffer, opusBuffer)
+			n, err := encoder.EncodeFloat32(frame, opusBuffer)
 			if err != nil {
-				log.Printf("[AudioCapture] Opus encoding error: %v", err)
 				continue
 			}
 
-			// Send to Discord (Non-blocking)
 			select {
 			case vc.OpusSend <- opusBuffer[:n]:
 				// Packet sent
 			default:
-				// Channel full, dropping frame to avoid latency buildup
+				// Network congestion, drop packet
 			}
 		}
 	}
