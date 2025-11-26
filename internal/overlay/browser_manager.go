@@ -8,24 +8,24 @@ import (
 
 var activeBrowsers []*exec.Cmd
 
-// Start launches headless Chromium instances for each provided URL.
-// It sets the PULSE_SINK environment variable to route audio to the dedicated Virtual Sink.
+// Start launches headless Chromium instances for given URLs.
 func Start(urls []string) error {
 	for _, url := range urls {
 		log.Printf("[Overlay] Launching headless browser for URL: %s", url)
 
-		// --remote-debugging-port is required for headless mode in specific environments.
-		// --no-sandbox is often required when running as root or inside containers.
+		// NOTE: "chromium" is the standard binary name on most Linux distros.
+		// "--autoplay-policy=no-user-gesture-required" is mandatory for audio in headless mode.
 		cmd := exec.Command("chromium",
 			"--headless",
 			"--disable-gpu",
 			"--no-sandbox",
 			"--remote-debugging-port=9222",
+			"--autoplay-policy=no-user-gesture-required",
+			"--disable-dev-shm-usage",
 			url,
 		)
 
-		// Clone current environment and inject PULSE_SINK.
-		// This must match the SinkName defined in internal/system/pipewire.go.
+		// Inject PULSE_SINK to route audio to our virtual sink
 		env := os.Environ()
 		env = append(env, "PULSE_SINK=VLX_VirtualSink")
 		cmd.Env = env
