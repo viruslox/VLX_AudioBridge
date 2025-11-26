@@ -15,8 +15,8 @@ import (
 )
 
 func main() {
-	// 1. Command line argument parsing
-	configPath := flag.String("config", "AudioBridge.yaml", "Configuration file path")
+	// 1. Parse command line arguments
+	configPath := flag.String("config", "AudioBridge.yaml", "Path to configuration file")
 	flag.Parse()
 
 	// 2. Load Configuration
@@ -25,38 +25,38 @@ func main() {
 		log.Fatalf("[ERR]: Critical error loading config: %v", err)
 	}
 
-	// 3. System Setup (Pipewire Check & Virtual Sink)
+	// 3. System Audio Setup (Pipewire/PulseAudio)
 	log.Println("[INFO]: Verifying audio system status...")
 	if err := system.SetupPipewire(); err != nil {
 		log.Fatalf("[ERR]: Pipewire setup failed: %v", err)
 	}
 
-	// 4. Initialize Overlay Module (Headless Browsers)
+	// 4. Initialize Overlay Manager (Headless Browsers)
 	log.Println("[INFO]: Initializing overlay manager...")
 	if err := overlay.Start(config.Cfg.Overlays.URLs); err != nil {
 		log.Fatalf("[ERR]: Failed to start overlays: %v", err)
 	}
-	// Ensure browsers are closed on exit
+	// Ensure browsers are terminated on exit
 	defer overlay.Stop()
 
-	// 5. Initialize Streaming Manager (FFmpeg SRT)
+	// 5. Initialize Streaming Manager
 	streamManager := stream.NewManager(config.Cfg.Streaming)
 
 	// 6. Initialize and Launch Discord Bot
 	log.Println("[INFO]: Launching Discord bot...")
-	discordBot, err := bot.New(config.Cfg.Discord, streamManager)
+	discordBot, err := bot.New(config.Cfg, streamManager)
 	if err != nil {
 		log.Fatalf("[ERR]: Failed to create Discord bot instance: %v", err)
 	}
 
 	if err := discordBot.Open(); err != nil {
-		log.Fatalf("[ERR]: Failed to connect to Discord: %v", err)
+		log.Fatalf("[ERR]: Failed to establish Discord connection: %v", err)
 	}
 	defer discordBot.Close()
 
 	log.Println("[INFO]: VLX_AudioBridge is running. Press CTRL+C to exit.")
 
-	// 7. Await Shutdown Signal (Graceful Shutdown)
+	// 7. Graceful Shutdown Handler
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
