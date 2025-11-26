@@ -15,6 +15,6 @@ streaming:
 overlays:
   # List of Web Overlay URLs to load and inject into Discord (Max 3)
   urls:
-    - "[https://stream-elements.com/overlay/](https://stream-elements.com/overlay/)..."
-    - "[https://another-overlay.com/](https://another-overlay.com/)..."
+    - "https://stream-elements.com/overlay/"
+    - "https://another-overlay.com/"
     # - "https://tuo-overlay-3.com"
