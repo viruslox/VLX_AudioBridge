@@ -16,7 +16,7 @@ func Start(urls []string) error {
 
 		// --remote-debugging-port is required for headless mode in specific environments.
 		// --no-sandbox is often required when running as root or inside containers.
-		cmd := exec.Command("chromium-browser",
+		cmd := exec.Command("chromium",
 			"--headless",
 			"--disable-gpu",
 			"--no-sandbox",
