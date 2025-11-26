@@ -61,14 +61,14 @@ VLX_AudioBridge/
 ### Install Dependencies
 ```bash
 sudo apt update
-sudo apt install git golang ffmpeg chromium-browser portaudio19-dev libopus-dev libopusfile-dev
+sudo apt install git golang ffmpeg chromium-browser portaudio19-dev libopus-dev libopusfile-dev pulseaudio-utils
 ```
 
 ## Installation & Build
 ### Clone the repository:
 ```bash
 mkdir -p ~/go/src/ && cd ~/go/src/
-git clone [https://github.com/viruslox/VLX_AudioBridge.git](https://github.com/viruslox/VLX_AudioBridge.git)
+git clone https://github.com/viruslox/VLX_AudioBridge.git
 cd VLX_AudioBridge
 ```
 ### Initialize and Tidy Modules:
