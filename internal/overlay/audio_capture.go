@@ -104,6 +104,11 @@ func CaptureAndStream(vc *discordgo.VoiceConnection, stopChan <-chan struct{}) e
 
 	log.Println("[AudioCapture] Streaming active via Jitter Buffer.")
 
+	if err := vc.Speaking(true); err != nil {
+        log.Printf("[AudioCapture] Warning: Failed to set speaking status: %v", err)
+    }
+    defer vc.Speaking(false)
+
 	opusBuffer := make([]byte, 4000)
 	silence := make([]float32, FramesPerBuffer*Channels)
 	
