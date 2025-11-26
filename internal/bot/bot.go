@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"VLX_AudioBridge/internal/config"
@@ -18,7 +19,7 @@ type Bot struct {
 	StreamManager   *stream.Manager
 	VoiceConnection *discordgo.VoiceConnection
 	StopCaptureChan chan struct{}
-	OwnerID         string // Application Owner ID for command authorization
+	OwnerID         string
 }
 
 // New initializes a new Bot instance.
@@ -28,7 +29,7 @@ func New(cfg *config.Config, sm *stream.Manager) (*Bot, error) {
 		return nil, fmt.Errorf("failed to create discord session: %w", err)
 	}
 
-	// Set required intents: GuildMessages for commands, GuildVoiceStates for channel detection
+	// Set required intents
 	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildVoiceStates
 
 	b := &Bot{
@@ -43,27 +44,34 @@ func New(cfg *config.Config, sm *stream.Manager) (*Bot, error) {
 	return b, nil
 }
 
-// Open establishes the websocket connection.
 func (b *Bot) Open() error {
 	return b.Session.Open()
 }
 
-// Close terminates the connection and cleans up resources.
 func (b *Bot) Close() {
+	// Graceful shutdown: stop capture goroutines before disconnecting voice
+	if b.StopCaptureChan != nil {
+		select {
+		case <-b.StopCaptureChan:
+			// Channel already closed
+		default:
+			close(b.StopCaptureChan)
+		}
+		// Allow time for goroutines to terminate
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	if b.VoiceConnection != nil {
-		// Context required for disconnect in the current library fork
+		// Context is required by the ozraru fork
 		b.VoiceConnection.Disconnect(context.Background())
 	}
 	b.Session.Close()
 }
 
-// isOwner verifies if the user is authorized to execute commands.
 func (b *Bot) isOwner(userID string) bool {
-	// 1. Check Application Owner
 	if b.OwnerID != "" && userID == b.OwnerID {
 		return true
 	}
-	// 2. Check Whitelist (ExcludedUsers)
 	for _, allowedID := range b.Config.Streaming.ExcludedUsers {
 		if userID == allowedID {
 			return true
@@ -77,7 +85,6 @@ func (b *Bot) isOwner(userID string) bool {
 func (b *Bot) onReady(s *discordgo.Session, r *discordgo.Ready) {
 	log.Printf("[Bot] Session started. Logged in as: %s#%s", s.State.User.Username, s.State.User.Discriminator)
 	
-	// Retrieve Application Info to automatically set OwnerID
 	app, err := s.Application("@me")
 	if err != nil {
 		log.Printf("[Bot] Warning: Failed to fetch application info: %v", err)
@@ -88,17 +95,14 @@ func (b *Bot) onReady(s *discordgo.Session, r *discordgo.Ready) {
 }
 
 func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	// Ignore bots and messages without prefix
 	if m.Author.Bot || !strings.HasPrefix(m.Content, b.Config.Discord.Prefix) {
 		return
 	}
 
-	// Strict Owner Check
 	if !b.isOwner(m.Author.ID) {
 		return
 	}
 
-	// Command Parsing
 	rawContent := strings.TrimPrefix(m.Content, b.Config.Discord.Prefix)
 	parts := strings.Fields(rawContent)
 	
@@ -124,11 +128,9 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 func (b *Bot) handleJoin(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
 	var channelID string
 
-	// 1. Manual Argument (Priority)
 	if len(args) > 0 {
 		channelID = args[0]
 	} else {
-		// 2. Auto-detect user channel
 		vs, err := s.State.VoiceState(m.GuildID, m.Author.ID)
 		if err == nil {
 			channelID = vs.ChannelID
@@ -136,13 +138,11 @@ func (b *Bot) handleJoin(s *discordgo.Session, m *discordgo.MessageCreate, args 
 	}
 
 	if channelID == "" {
-		s.ChannelMessageSend(m.ChannelID, "Error: Missing Channel ID. Usage: `vlx.join <ChannelID>`")
+		s.ChannelMessageSend(m.ChannelID, "Error: Missing Channel ID.")
 		return
 	}
 
-	// Join Voice Channel. 
-	// Mute/Deaf must be false to allow bidirectional audio (Overlay injection + SRT capture).
-	// Context is required for the Join call in this library version.
+	// Join Voice Channel using context (required by ozraru fork)
 	vc, err := s.ChannelVoiceJoin(context.Background(), m.GuildID, channelID, false, false)
 	if err != nil {
 		log.Printf("[Bot] Voice connection failed: %v", err)
@@ -151,7 +151,30 @@ func (b *Bot) handleJoin(s *discordgo.Session, m *discordgo.MessageCreate, args 
 	}
 	b.VoiceConnection = vc
 
-	// 1. Start SRT Packet Capture (Discord -> MediaMTX)
+	s.ChannelMessageSend(m.ChannelID, "Connected. Stabilizing voice uplink...")
+
+	// --- Connection Stabilization Logic ---
+	
+	// 1. Wait for UDP Handshake completion
+	time.Sleep(1 * time.Second)
+
+	// 2. Set Speaking status to allow UDP ingress
+	if err := vc.Speaking(true); err != nil {
+		log.Printf("[Bot] Warning: Failed to set speaking status: %v", err)
+	}
+
+	// 3. UDP Hole Punching: Send silence frames to establish NAT traversal
+	silenceFrame := []byte{0xF8, 0xFF, 0xFE} // Opus silence frame
+	for i := 0; i < 5; i++ {
+		if b.VoiceConnection != nil {
+			b.VoiceConnection.OpusSend <- silenceFrame
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// --- Start Subsystems ---
+
+	// Start Egress Capture (Discord -> SRT)
 	go func() {
 		log.Println("[Bot] Starting packet capture loop.")
 		for p := range vc.OpusRecv {
@@ -159,23 +182,24 @@ func (b *Bot) handleJoin(s *discordgo.Session, m *discordgo.MessageCreate, args 
 				b.StreamManager.HandlePacket(p)
 			}
 		}
+		log.Println("[Bot] Packet capture loop terminated.")
 	}()
 
 	if b.StreamManager != nil {
 		if err := b.StreamManager.Start(); err != nil {
-			log.Printf("[Bot] Stream Manager start failed: %v", err)
+			log.Printf("[Bot] Error starting StreamManager: %v", err)
 		}
 	}
 
-	// 2. Start Overlay Audio Injection (Pipewire -> Discord)
+	// Start Ingress Injection (Overlay -> Discord)
 	b.StopCaptureChan = make(chan struct{})
 	go func() {
 		if err := overlay.CaptureAndStream(vc, b.StopCaptureChan); err != nil {
-			log.Printf("[Bot] Overlay capture failed: %v", err)
+			log.Printf("[Bot] Error in Overlay capture: %v", err)
 		}
 	}()
 
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Connected to %s. Audio bridging active.", channelID))
+	s.ChannelMessageSend(m.ChannelID, "Audio Bridge Active.")
 }
 
 func (b *Bot) handleLeave(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -186,6 +210,7 @@ func (b *Bot) handleLeave(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Stop Overlay Capture
 	if b.StopCaptureChan != nil {
 		close(b.StopCaptureChan)
+		b.StopCaptureChan = nil
 	}
 	// Stop SRT Stream
 	if b.StreamManager != nil {
