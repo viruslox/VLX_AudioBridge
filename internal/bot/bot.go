@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -12,22 +13,23 @@ import (
 )
 
 type Bot struct {
-	Session       *discordgo.Session
-	Config        config.DiscordConfig
-	StreamManager *stream.Manager
+	Session         *discordgo.Session
+	Config          *config.Config
+	StreamManager   *stream.Manager
 	VoiceConnection *discordgo.VoiceConnection
 	StopCaptureChan chan struct{}
+	OwnerID         string // Application Owner ID for command authorization
 }
 
-func New(cfg config.DiscordConfig, sm *stream.Manager) (*Bot, error) {
-	dg, err := discordgo.New("Bot " + cfg.Token)
+// New initializes a new Bot instance.
+func New(cfg *config.Config, sm *stream.Manager) (*Bot, error) {
+	dg, err := discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
-		return nil, fmt.Errorf("error creating discord session: %w", err)
+		return nil, fmt.Errorf("failed to create discord session: %w", err)
 	}
 
-	dg.Identify.Intents = discordgo.IntentsGuildMessages |
-		discordgo.IntentsGuildVoiceStates |
-		discordgo.IntentsGuildMembers
+	// Set required intents: GuildMessages for commands, GuildVoiceStates for channel detection
+	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildVoiceStates
 
 	b := &Bot{
 		Session:       dg,
@@ -37,42 +39,79 @@ func New(cfg config.DiscordConfig, sm *stream.Manager) (*Bot, error) {
 
 	dg.AddHandler(b.onReady)
 	dg.AddHandler(b.onMessageCreate)
-//	dg.AddHandler(b.onVoiceSpeakingUpdate)
 
 	return b, nil
 }
 
+// Open establishes the websocket connection.
 func (b *Bot) Open() error {
 	return b.Session.Open()
 }
 
+// Close terminates the connection and cleans up resources.
 func (b *Bot) Close() {
-	// Cleanup on close
 	if b.VoiceConnection != nil {
-		b.VoiceConnection.Disconnect()
+		// Context required for disconnect in the current library fork
+		b.VoiceConnection.Disconnect(context.Background())
 	}
 	b.Session.Close()
+}
+
+// isOwner verifies if the user is authorized to execute commands.
+func (b *Bot) isOwner(userID string) bool {
+	// 1. Check Application Owner
+	if b.OwnerID != "" && userID == b.OwnerID {
+		return true
+	}
+	// 2. Check Whitelist (ExcludedUsers)
+	for _, allowedID := range b.Config.Streaming.ExcludedUsers {
+		if userID == allowedID {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Event Handlers ---
 
 func (b *Bot) onReady(s *discordgo.Session, r *discordgo.Ready) {
-	log.Printf("[Bot] Logged in as: %s#%s", s.State.User.Username, s.State.User.Discriminator)
+	log.Printf("[Bot] Session started. Logged in as: %s#%s", s.State.User.Username, s.State.User.Discriminator)
+	
+	// Retrieve Application Info to automatically set OwnerID
+	app, err := s.Application("@me")
+	if err != nil {
+		log.Printf("[Bot] Warning: Failed to fetch application info: %v", err)
+	} else if app.Owner != nil {
+		b.OwnerID = app.Owner.ID
+		log.Printf("[Bot] Owner detected: %s. Commands restricted to this user.", b.OwnerID)
+	}
 }
 
 func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	// Ignore messages from bots or without prefix
-	if m.Author.Bot || !strings.HasPrefix(m.Content, b.Config.Prefix) {
+	// Ignore bots and messages without prefix
+	if m.Author.Bot || !strings.HasPrefix(m.Content, b.Config.Discord.Prefix) {
 		return
 	}
 
-	// Parse command
-	args := strings.Fields(m.Content)
-	cmd := strings.TrimPrefix(args[0], b.Config.Prefix)
+	// Strict Owner Check
+	if !b.isOwner(m.Author.ID) {
+		return
+	}
+
+	// Command Parsing
+	rawContent := strings.TrimPrefix(m.Content, b.Config.Discord.Prefix)
+	parts := strings.Fields(rawContent)
+	
+	if len(parts) == 0 {
+		return
+	}
+	
+	cmd := parts[0]
+	args := parts[1:]
 
 	switch cmd {
 	case "join":
-		b.handleJoin(s, m)
+		b.handleJoin(s, m, args)
 	case "leave":
 		b.handleLeave(s, m)
 	case "shutdown":
@@ -80,62 +119,63 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 }
 
-// onVoiceSpeakingUpdate captures the SSRC of speaking users.
-// This is critical for filtering excluded users in the Stream Manager.
-func (b *Bot) onVoiceSpeakingUpdate(s *discordgo.Session, v *discordgo.VoiceSpeakingUpdate) {
-	// Update the SSRC mapping in the Stream Manager
-	// Assuming StreamManager has a method: SetUserSSRC(ssrc uint32, userID string)
-	if b.StreamManager != nil {
-		b.StreamManager.SetUserSSRC(uint32(v.SSRC), v.UserID)
-		log.Printf("[Bot] Updated SSRC map: User %s -> SSRC %d", v.UserID, v.SSRC)
+// --- Command Implementation ---
+
+func (b *Bot) handleJoin(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+	var channelID string
+
+	// 1. Manual Argument (Priority)
+	if len(args) > 0 {
+		channelID = args[0]
+	} else {
+		// 2. Auto-detect user channel
+		vs, err := s.State.VoiceState(m.GuildID, m.Author.ID)
+		if err == nil {
+			channelID = vs.ChannelID
+		}
 	}
-}
 
-// --- Command Logic ---
-
-func (b *Bot) handleJoin(s *discordgo.Session, m *discordgo.MessageCreate) {
-	// Find the voice channel the user is currently in
-	vs, err := s.State.VoiceState(m.GuildID, m.Author.ID)
-	if err != nil {
-		s.ChannelMessageSend(m.ChannelID, "⚠️ You must be in a voice channel to summon me.")
+	if channelID == "" {
+		s.ChannelMessageSend(m.ChannelID, "Error: Missing Channel ID. Usage: `vlx.join <ChannelID>`")
 		return
 	}
 
-	// Join the voice channel
-	vc, err := s.ChannelVoiceJoin(m.GuildID, vs.ChannelID, false, true)
+	// Join Voice Channel. 
+	// Mute/Deaf must be false to allow bidirectional audio (Overlay injection + SRT capture).
+	// Context is required for the Join call in this library version.
+	vc, err := s.ChannelVoiceJoin(context.Background(), m.GuildID, channelID, false, false)
 	if err != nil {
-		log.Printf("[Bot] Failed to join voice channel: %v", err)
-		s.ChannelMessageSend(m.ChannelID, "❌ Failed to join voice channel.")
+		log.Printf("[Bot] Voice connection failed: %v", err)
+		s.ChannelMessageSend(m.ChannelID, "Error: Failed to join voice channel.")
 		return
 	}
 	b.VoiceConnection = vc
 
-	// 1. Start the SRT Stream Manager (Incoming Audio -> Mixing -> FFmpeg)
-	// We need to attach the packet handler to the VoiceConnection
+	// 1. Start SRT Packet Capture (Discord -> MediaMTX)
 	go func() {
-		log.Println("[Bot] Starting Packet Handler loop...")
-		// b.StreamManager.HandlePacket is called for every incoming opus packet
+		log.Println("[Bot] Starting packet capture loop.")
 		for p := range vc.OpusRecv {
-			b.StreamManager.HandlePacket(p)
+			if b.StreamManager != nil {
+				b.StreamManager.HandlePacket(p)
+			}
 		}
 	}()
 
-	if err := b.StreamManager.Start(); err != nil {
-		log.Printf("[Bot] Failed to start stream manager: %v", err)
-		s.ChannelMessageSend(m.ChannelID, "⚠️ Joined, but failed to start SRT stream.")
-	} else {
-		log.Println("[Bot] SRT Stream Manager started.")
+	if b.StreamManager != nil {
+		if err := b.StreamManager.Start(); err != nil {
+			log.Printf("[Bot] Stream Manager start failed: %v", err)
+		}
 	}
 
-	// 2. Start Overlay Audio Capture (Virtual Sink -> Opus Enc -> Discord)
+	// 2. Start Overlay Audio Injection (Pipewire -> Discord)
 	b.StopCaptureChan = make(chan struct{})
 	go func() {
 		if err := overlay.CaptureAndStream(vc, b.StopCaptureChan); err != nil {
-			log.Printf("[Bot] Error in overlay audio capture: %v", err)
+			log.Printf("[Bot] Overlay capture failed: %v", err)
 		}
 	}()
 
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ Connected to **%s**.\n📡 Stream started.\n🖥️ Overlays active.", vs.ChannelID))
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Connected to %s. Audio bridging active.", channelID))
 }
 
 func (b *Bot) handleLeave(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -143,31 +183,24 @@ func (b *Bot) handleLeave(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	// Stop Capture
+	// Stop Overlay Capture
 	if b.StopCaptureChan != nil {
 		close(b.StopCaptureChan)
 	}
+	// Stop SRT Stream
+	if b.StreamManager != nil {
+		b.StreamManager.Stop()
+	}
 
-	// Stop Stream Manager
-	b.StreamManager.Stop()
-
-	// Disconnect
-	b.VoiceConnection.Disconnect()
+	// Disconnect Voice
+	b.VoiceConnection.Disconnect(context.Background())
 	b.VoiceConnection = nil
-
-	s.ChannelMessageSend(m.ChannelID, "👋 Disconnected.")
-	log.Println("[Bot] Disconnected from voice channel.")
+	
+	s.ChannelMessageSend(m.ChannelID, "Disconnected.")
+	log.Println("[Bot] Voice connection closed.")
 }
 
 func (b *Bot) handleShutdown(s *discordgo.Session, m *discordgo.MessageCreate) {
-	// Simple permission check (should be improved for production)
-	// For now, checks if the issuer is the guild owner or configured admin
-	// Implementation omitted for brevity
-
-	s.ChannelMessageSend(m.ChannelID, "🛑 Shutting down system...")
+	s.ChannelMessageSend(m.ChannelID, "System shutting down...")
 	b.handleLeave(s, m)
-
-	// In main.go, the OS signal handling will take care of the rest
-	// or we can manually trigger exit.
-	// Ideally, send a signal to a main channel to exit gracefully.
 }
