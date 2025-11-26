@@ -29,7 +29,7 @@ func NewFFmpegProcess(cfg config.StreamingConfig) (*FFmpegProcess, error) {
 		"-ar", "48000",
 		"-ac", "2",
 		"-i", "pipe:0",
-		"-c:a", "aac",
+		"-c:a", "libopus",
 		"-b:a", cfg.Bitrate,
 		"-f", "mpegts",
 		cfg.DestinationURL,
