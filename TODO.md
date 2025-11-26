@@ -52,6 +52,7 @@ The project architecture has been fully redesigned. Core modules have been draft
     - [ ] Check A/V sync and latency.
     - [ ] **Mixing Quality:** Validate audio quality when multiple users speak (check for distortion).
 - [ ] **Exclusion Logic:** Verify that configured `excluded_users` are NOT audible in the SRT stream.
+- [ ] **Implement a "Soft Clipper"** (e.g. using the tanh function) to compress the signal gently instead of cutting it off sharply.
 
 ### 5. Deployment
 - [ ] **Service Configuration:** Install `scripts/ermete.service` to `~/.config/systemd/user/`.
