@@ -69,7 +69,7 @@ func CaptureAndStream(vc *discordgo.VoiceConnection, stopChan <-chan struct{}) e
 	if err != nil {
 		return fmt.Errorf("failed to create Opus encoder: %w", err)
 	}
-	encoder.SetBitrate(64000) // 64kbps for stability
+	encoder.SetBitrate(128000) // 64kbps for stability, 128000 for heroes
 
 	// --- Ring Buffer Channel ---
 	pcmChan := make(chan []float32, BufferSize)
