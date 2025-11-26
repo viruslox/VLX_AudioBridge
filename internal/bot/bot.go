@@ -37,7 +37,7 @@ func New(cfg config.DiscordConfig, sm *stream.Manager) (*Bot, error) {
 
 	dg.AddHandler(b.onReady)
 	dg.AddHandler(b.onMessageCreate)
-	dg.AddHandler(b.onVoiceSpeakingUpdate)
+//	dg.AddHandler(b.onVoiceSpeakingUpdate)
 
 	return b, nil
 }
