@@ -42,9 +42,13 @@ func main() {
 	// 5. Initialize Streaming Manager
 	streamManager := stream.NewManager(config.Cfg.Streaming)
 
-	// 6. Initialize and Launch Discord Bot
+	// 6. Graceful Shutdown Handler (Initialized early to pass to Bot)
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+
+	// 7. Initialize and Launch Discord Bot
 	log.Println("[INFO]: Launching Discord bot...")
-	discordBot, err := bot.New(config.Cfg, streamManager)
+	discordBot, err := bot.New(config.Cfg, streamManager, sc)
 	if err != nil {
 		log.Fatalf("[ERR]: Failed to create Discord bot instance: %v", err)
 	}
@@ -56,9 +60,7 @@ func main() {
 
 	log.Println("[INFO]: VLX_AudioBridge is running. Press CTRL+C to exit.")
 
-	// 7. Graceful Shutdown Handler
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	// 8. Wait for shutdown signal (from OS or Bot)
 	<-sc
 
 	log.Println("[INFO]: Shutdown signal received. Exiting...")
