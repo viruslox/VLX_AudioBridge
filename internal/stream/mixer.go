@@ -2,6 +2,7 @@ package stream
 
 import (
 	"encoding/binary"
+	"math"
 	"sync"
 	"time"
 )
@@ -10,7 +11,7 @@ const (
 	SampleRate   = 48000
 	Channels     = 2
 	FrameSize    = 960 // 20ms at 48kHz
-	MaxBufferLen = 50  // Frame buffer size to mitigate jitter
+	MaxBufferLen = 50  // Jitter buffer size
 )
 
 type Mixer struct {
@@ -22,16 +23,13 @@ type Mixer struct {
 func NewMixer() *Mixer {
 	return &Mixer{
 		userBuffers: make(map[uint32][][]int16),
-		// OTTIMIZZAZIONE LATENZA:
-		// Ridotto da 100 a 10. Un buffer di 100 pacchetti = 2 secondi di ritardo potenziale.
-		// 10 pacchetti = 200ms di buffer, molto più reattivo.
+		// Low latency buffer: 10 frames = ~200ms
 		mixedOut: make(chan []byte, 10),
 	}
 }
 
-// AddFrame standard: accetta pacchetti da 20ms (standard Discord Voice).
-// I pacchetti Soundboard (più grandi) verranno processati solo per i primi 20ms, 
-// ma questo garantisce zero lag per la voce.
+// AddFrame queues incoming PCM packets.
+// Note: Standard Discord packets are 20ms. Larger packets are truncated to maintain low latency.
 func (m *Mixer) AddFrame(ssrc uint32, data []int16) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -40,20 +38,23 @@ func (m *Mixer) AddFrame(ssrc uint32, data []int16) {
 		m.userBuffers[ssrc] = make([][]int16, 0, MaxBufferLen)
 	}
 
+	// Drop oldest frame if buffer is full (Ring buffer logic)
 	if len(m.userBuffers[ssrc]) >= MaxBufferLen {
 		m.userBuffers[ssrc] = m.userBuffers[ssrc][1:]
 	}
 
-	// Copia i dati per stabilità (Race Condition Fix)
+	// Copy data to avoid reference race conditions
 	frameCopy := make([]int16, len(data))
 	copy(frameCopy, data)
 	m.userBuffers[ssrc] = append(m.userBuffers[ssrc], frameCopy)
 }
 
+// StartMixing initiates the 20ms ticking loop.
 func (m *Mixer) StartMixing(stopChan <-chan struct{}) {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
+	// Reusable buffer for mixing calculations
 	outputFrame := make([]int16, FrameSize*Channels)
 
 	for {
@@ -69,40 +70,49 @@ func (m *Mixer) StartMixing(stopChan <-chan struct{}) {
 func (m *Mixer) mixTick(out []int16) {
 	m.mutex.Lock()
 
-	// 1. Reset silence
+	// 1. Reset output frame to silence
 	for i := range out {
 		out[i] = 0
 	}
 
-	// 2. Mixing
+	// 2. Mix samples from all users
 	for ssrc, frames := range m.userBuffers {
 		if len(frames) > 0 {
 			currentFrame := frames[0]
-			// Mix sicuro
+			
 			for i := 0; i < len(out) && i < len(currentFrame); i++ {
+				// Summing samples
 				sum := int32(out[i]) + int32(currentFrame[i])
-				if sum > 32767 {
-					sum = 32767
-				} else if sum < -32768 {
-					sum = -32768
+				
+				// Soft Clipping (Tanh)
+				// Replaces hard clipping to prevent harsh distortion on volume spikes.
+				// Formula: output = 32768 * tanh(sum / 32768)
+				val := 32768.0 * math.Tanh(float64(sum)/32768.0)
+
+				// Final clamp to int16 range
+				if val > 32767 {
+					val = 32767
+				} else if val < -32768 {
+					val = -32768
 				}
-				out[i] = int16(sum)
+				out[i] = int16(val)
 			}
+			// Dequeue processed frame
 			m.userBuffers[ssrc] = m.userBuffers[ssrc][1:]
 		}
 	}
 	m.mutex.Unlock()
 
-	// 3. Allocazione Nuova Slice (Race Condition Fix)
+	// 3. Serialize to Little Endian (Allocate new slice for channel safety)
 	outBytes := make([]byte, len(out)*2)
 	for i, sample := range out {
 		binary.LittleEndian.PutUint16(outBytes[i*2:], uint16(sample))
 	}
 
-	// 4. Send non-bloccante
+	// 4. Non-blocking send to FFmpeg
 	select {
 	case m.mixedOut <- outBytes:
 	default:
-		// Se il canale è pieno, droppa il pacchetto per non accumulare ritardo.
+		// Drop frame if consumer (FFmpeg) is lagging to avoid latency accumulation
 	}
 }
