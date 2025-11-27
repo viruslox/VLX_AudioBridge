@@ -17,30 +17,32 @@ type FFmpegProcess struct {
 }
 
 func NewFFmpegProcess(cfg config.StreamingConfig) (*FFmpegProcess, error) {
-	// Build FFmpeg command arguments:
-	// -re: Read input at native frame rate (simulates real-time)
-	// -f s16le: Input format PCM Signed 16-bit Little Endian
-	// -ar 48000: Input sample rate
-	// -ac 2: Input channels (Stereo)
-	// -i pipe:0: Read input from Stdin
 	args := []string{
-		"-re",
+		// RIMOSSO: "-re", perché il Mixer Go è già sincronizzato in tempo reale.
 		"-f", "s16le",
 		"-ar", "48000",
 		"-ac", "2",
 		"-i", "pipe:0",
-		"-c:a", "libopus",
+		"-c:a", "libopus", // O "aac" se preferisci
 		"-b:a", cfg.Bitrate,
 		"-f", "mpegts",
-		cfg.DestinationURL,
+		"-flush_packets", "0",
+		// Tweaks per bassa latenza FFmpeg
+		"-fflags", "nobuffer", 
+		"-flags", "low_delay",
 	}
+
+	// Aggiungi pkt_size se SRT
+	destination := cfg.DestinationURL
+	if strings.HasPrefix(destination, "srt://") && !strings.Contains(destination, "pkt_size") {
+		 destination += "&pkt_size=1316"
+	}
+	args = append(args, destination)
 
 	log.Printf("[INFO] [Stream]: FFmpeg command: ffmpeg %s", strings.Join(args, " "))
 
 	cmd := exec.Command("ffmpeg", args...)
-
-	// Optional: Connect stderr to parent stdout for debugging
-	// cmd.Stderr = os.Stderr
+	cmd.Stderr = nil // Puoi rimettere os.Stderr se vuoi debuggare, ma nil è più pulito in prod
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -53,16 +55,11 @@ func NewFFmpegProcess(cfg config.StreamingConfig) (*FFmpegProcess, error) {
 	}, nil
 }
 
+// ... (Start, Write, Stop rimangono invariati) ...
 func (f *FFmpegProcess) Start() error {
-	if f.isRunning {
-		return nil
-	}
-	if err := f.cmd.Start(); err != nil {
-		return err
-	}
+	if f.isRunning { return nil }
+	if err := f.cmd.Start(); err != nil { return err }
 	f.isRunning = true
-
-	// Monitor for premature exit
 	go func() {
 		f.cmd.Wait()
 		f.isRunning = false
@@ -72,9 +69,7 @@ func (f *FFmpegProcess) Start() error {
 }
 
 func (f *FFmpegProcess) Write(pcmData []byte) (int, error) {
-	if !f.isRunning {
-		return 0, fmt.Errorf("ffmpeg is not running")
-	}
+	if !f.isRunning { return 0, fmt.Errorf("ffmpeg is not running") }
 	return f.stdin.Write(pcmData)
 }
 
