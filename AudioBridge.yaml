@@ -5,7 +5,7 @@ discord:
 
 streaming:
   # SRT Destination (e.g., MediaMTX) # mode=caller to enable "us" as media sender
-  destination_url: "srt://127.0.0.1:8890?streamid=publish:vlx_audio&mode=caller"
+  destination_url: "srt://127.0.0.1:8890?streamid=publish:vlx_audio&mode=caller&pkt_size=1316"
   bitrate: "128k" # Audio output Bitrate for FFmpeg
   # List of Discord User IDs to exclude from the SRT stream (Max 2)
   excluded_users:
