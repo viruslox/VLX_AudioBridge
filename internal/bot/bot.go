@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -20,10 +22,12 @@ type Bot struct {
 	VoiceConnection *discordgo.VoiceConnection
 	StopCaptureChan chan struct{}
 	OwnerID         string
+	ShutdownChan    chan os.Signal // Channel to signal main process termination
 }
 
 // New initializes a new Bot instance.
-func New(cfg *config.Config, sm *stream.Manager) (*Bot, error) {
+// Updated to accept the shutdown channel.
+func New(cfg *config.Config, sm *stream.Manager, shutdownChan chan os.Signal) (*Bot, error) {
 	dg, err := discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discord session: %w", err)
@@ -36,6 +40,7 @@ func New(cfg *config.Config, sm *stream.Manager) (*Bot, error) {
 		Session:       dg,
 		Config:        cfg,
 		StreamManager: sm,
+		ShutdownChan:  shutdownChan,
 	}
 
 	dg.AddHandler(b.onReady)
@@ -228,4 +233,10 @@ func (b *Bot) handleLeave(s *discordgo.Session, m *discordgo.MessageCreate) {
 func (b *Bot) handleShutdown(s *discordgo.Session, m *discordgo.MessageCreate) {
 	s.ChannelMessageSend(m.ChannelID, "System shutting down...")
 	b.handleLeave(s, m)
+
+	// Send termination signal to main process to trigger graceful shutdown
+	if b.ShutdownChan != nil {
+		log.Println("[Bot] Sending shutdown signal...")
+		b.ShutdownChan <- syscall.SIGTERM
+	}
 }
