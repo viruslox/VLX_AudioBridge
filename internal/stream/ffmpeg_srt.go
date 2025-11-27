@@ -18,21 +18,21 @@ type FFmpegProcess struct {
 
 func NewFFmpegProcess(cfg config.StreamingConfig) (*FFmpegProcess, error) {
 	args := []string{
-		// RIMOSSO: "-re", perché il Mixer Go è già sincronizzato in tempo reale.
+		// Note: "-re" flag removed as the Go Mixer already dictates real-time timing.
 		"-f", "s16le",
 		"-ar", "48000",
 		"-ac", "2",
 		"-i", "pipe:0",
-		"-c:a", "libopus", // O "aac" se preferisci
+		"-c:a", "libopus",
 		"-b:a", cfg.Bitrate,
 		"-f", "mpegts",
 		"-flush_packets", "0",
-		// Tweaks per bassa latenza FFmpeg
+		// FFmpeg low latency flags
 		"-fflags", "nobuffer", 
 		"-flags", "low_delay",
 	}
 
-	// Aggiungi pkt_size se SRT
+	// Append pkt_size to SRT destination for stability
 	destination := cfg.DestinationURL
 	if strings.HasPrefix(destination, "srt://") && !strings.Contains(destination, "pkt_size") {
 		 destination += "&pkt_size=1316"
@@ -41,8 +41,9 @@ func NewFFmpegProcess(cfg config.StreamingConfig) (*FFmpegProcess, error) {
 
 	log.Printf("[INFO] [Stream]: FFmpeg command: ffmpeg %s", strings.Join(args, " "))
 
+	// Set to nil for production cleanliness, or os.Stderr for debugging
 	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stderr = nil // Puoi rimettere os.Stderr se vuoi debuggare, ma nil è più pulito in prod
+	cmd.Stderr = nil 
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -55,7 +56,8 @@ func NewFFmpegProcess(cfg config.StreamingConfig) (*FFmpegProcess, error) {
 	}, nil
 }
 
-// ... (Start, Write, Stop rimangono invariati) ...
+// ... (Rest of the file remains unchanged as it was already correct) ...
+// (Mantieni Start, Write e Stop come sono)
 func (f *FFmpegProcess) Start() error {
 	if f.isRunning { return nil }
 	if err := f.cmd.Start(); err != nil { return err }
