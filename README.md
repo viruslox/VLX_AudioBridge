@@ -18,9 +18,9 @@ The bridge operates in two concurrent directions:
 
 2.  **Egress (Discord -> SRT Stream):**
     * Captures incoming Opus packets from Discord users.
-    * **Mixes** audio streams in real-time, handling multiple speakers.
+    * **Mixes** audio streams in real-time.
     * Filters out specific users (e.g., the bot itself or admin accounts) based on configuration.
-    * Pipes the mixed PCM audio to **FFmpeg** for AAC encoding and **SRT** transmission (e.g., to MediaMTX).
+    * Pipes the mixed PCM audio to **FFmpeg** for encoding and **SRT** transmission.
 
 ### Structure
 ```bash
@@ -42,7 +42,7 @@ VLX_AudioBridge/
 │   └── system/
 │       └── pipewire.go          # Helper per verificare/creare il Virtual Sink (pactl/pw-cli)
 ├── scripts/
-│   └── ermete.service           # File di unità Systemd per l'autostart
+│   └── vlx_audiobridge.service  # File di unità Systemd per l'autostart
 ├── go.mod                       # Dipendenze Go
 ├── go.sum                       # Checksum dipendenze
 └── README.md
@@ -50,13 +50,8 @@ VLX_AudioBridge/
 
 ## System Requirements
 * **OS:** Linux (Tested on Debian).
-* **Audio System:** Pipewire (with PulseAudio compatibility layer `pipewire-pulse`).
-* **Dependencies:**
-    * Go 1.20+
-    * GCC (required for CGO)
-    * FFmpeg
-    * Chromium Browser
-    * PortAudio & Opus development libraries
+* **Audio System:** Pipewire (with `pipewire-pulse`).
+* **Dependencies:** Go 1.20+, FFmpeg, Chromium Browser, PortAudio & Opus dev libraries.
 
 ### Install Dependencies
 ```bash
@@ -65,6 +60,8 @@ sudo apt install git golang ffmpeg chromium-browser portaudio19-dev libopus-dev 
 ```
 
 ## Installation & Build
+
+
 ### Clone the repository:
 ```bash
 mkdir -p ~/go/src/ && cd ~/go/src/
@@ -74,37 +71,42 @@ cd VLX_AudioBridge
 ### Initialize and Tidy Modules:
 ```bash
 go mod init
+go mod edit -replace github.com/bwmarrin/discordgo=github.com/ozraru/discordgo@master
 go mod tidy
 ```
 
 ### Build the Binary:
 ```bash
-go build -o vlx_audiobridge main.go
+go build
 ```
 
 ### Deploy to /opt 
 I hate "sudo", but let's make it easy:
 ```bash
 sudo mkdir -p /opt/VLX_AudioBridge
+
 # Ensure your user owns the directory
 sudo chown -R $USER:$USER /opt/VLX_AudioBridge
-cp ~/go/src/VLX_AudioBridge/vlx_audiobridge /opt/VLX_AudioBridge/
+cp ~/go/src/VLX_AudioBridge/VLX_AudioBridge /opt/VLX_AudioBridge/
+
 # Copy config the example, but remember to edit it
 cp ~/go/src/VLX_AudioBridge/AudioBridge.yaml /opt/VLX_AudioBridge/
 ```
 
 ## Configuration
-The application uses a YAML configuration file. Edit AudioBridge.yaml. Example:
+The application uses a YAML configuration file. 
+Edit /opt/VLX_AudioBridge/AudioBridge.yaml. Example:
+
 ```YAML
 discord:
   token: "YOUR_DISCORD_BOT_TOKEN"
-  prefix: "vlx."       # Command prefix
+  prefix: "vlx."       # Discord commands prefix
   guild_id: ""         # Optional: Restrict to specific Guild ID
 
 streaming:
-  # SRT Destination (e.g., MediaMTX)
-  destination_url: "srt://127.0.0.1:8890?streamid=publish:vlx_audio&mode=caller"
-  bitrate: "128k"
+  # SRT Destination (e.g., MediaMTX) # mode=caller to enable "us" as media sender
+  destination_url: "srt://127.0.0.1:8890?streamid=publish:vlx_audio&mode=caller&pkt_size=1316"
+  bitrate: "128k" # Audio output Bitrate for FFmpeg
   # List of Discord User IDs to exclude from the SRT stream (Max 2)
   excluded_users:
     - "123456789012345678"
@@ -112,27 +114,37 @@ streaming:
 overlays:
   # List of Web Overlay URLs to load and inject into Discord (Max 3)
   urls:
-    - "[https://stream-elements.com/overlay/](https://stream-elements.com/overlay/)..."
-    - "[https://another-overlay.com/](https://another-overlay.com/)..."
+    - "https://stream-elements.com/overlay/"
+    - "https://another-overlay.com/"
+    # - "https://tuo-overlay-3.com"
 ```
 
 ## Usage
 ### Manual Run
-Ensure your Pipewire session is active (usually strictly related to the user session).
+NOTE: Ensure your Pipewire session is active.
 
 ```Bash
-./vlx_bridge
+/opt/VLX_AudioBridge/
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+./VLX_AudioBridge
 ```
 
 ## Discord Commands
 
 vlx.join : Joins the user's voice channel, starts the SRT stream, and launches overlay browsers.
+
 vlx.leave: Stops streaming, closes browsers, and disconnects from the voice channel.
-vlx.shutdown: Gracefully shuts down the entire bridge process (Admin only).
+
+vlx.shutdown: Gracefully shuts down the entire bridge process.
 
 ## Running as a Service (Systemd)
-Since Pipewire is a user-level service, VLX_AudioBridge must run as a Systemd User Service, not a system-wide root service.
-Create the service file: ~/.config/systemd/user/vlx_audiobridge.service
+
+```Bash
+mkdir -p ~/.config/systemd/user/
+cp ~/go/src/VLX_AudioBridge/scripts/vlx_audiobridge.service ~/.config/systemd/user/
+```
+
+Edit ~/.config/systemd/user/vlx_audiobridge.service - at least configure "your user".
 
 ```Ini, TOML
 [Unit]
@@ -142,8 +154,7 @@ Requires=pipewire.service
 
 [Service]
 Type=simple
-# Adjust paths to your actual installation
-ExecStart=/opt/VLX_AudioBridge/vlx_audiobridge
+ExecStart=/opt/VLX_AudioBridge/VLX_AudioBridge
 WorkingDirectory=/opt/VLX_AudioBridge/
 Restart=always
 RestartSec=5
@@ -158,14 +169,14 @@ WantedBy=default.target
 
 ```Bash
 systemctl --user daemon-reload
-systemctl --user enable vlx_bridge
-systemctl --user start vlx_bridge
+systemctl --user enable vlx_audiobridge.service
+systemctl --user start vlx_audiobridge.service
 ```
 
 ## Check Logs:
 
 ```bash
-journalctl --user -u vlx_bridge -f
+journalctl --user -u vlx_audiobridge.service -f
 ```
 
 ## Troubleshooting
