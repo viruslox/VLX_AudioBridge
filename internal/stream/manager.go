@@ -77,23 +77,23 @@ func (m *Manager) HandlePacket(p *discordgo.Packet) {
 		m.opusDecoders[p.SSRC] = decoder
 	}
 
-	// FIX: Increased buffer size to support up to 60ms Opus frames (Soundboard uses >20ms)
+	// Buffer size accomodates up to 60ms Opus frames (max Soundboard size)
 	// 60ms * 48000Hz = 2880 samples * 2 channels = 5760 int16s
 	pcmBuffer := make([]int16, 5760) 
 	
 	n, err := decoder.Decode(p.Opus, pcmBuffer)
 	if err != nil {
-		// Log solo errori critici, ignora "corrupted stream" occasionali
+		// Log only critical errors, ignore occasional 'corrupted stream' which is expected on UDP
 		if err.Error() != "opus: corrupted stream" {
 			log.Printf("[Stream] Decode Error for SSRC %d: %v", p.SSRC, err)
 		}
 		return
 	}
 
-	// Pass the decoded data to mixer (n is samples per channel)
+	// Pass decoded PCM to mixer
 	m.mixer.AddFrame(p.SSRC, pcmBuffer[:n*2])
 }
 
 func (m *Manager) SetUserSSRC(ssrc uint32, userID string) {
-    // Placeholder
+    // Placeholder for future SSRC-UserID mapping logic
 }
