@@ -1,33 +1,18 @@
 # VLX_AudioBridge Roadmap & Tasks
 
-**Current Status:** **Testing & Tuning Phase**
-Core streaming and mixing logic is stable. SRT latency issues resolved. Soundboard support deprecated for stability.
+**Current Status:** 
+***Version 2.0 Ready***
+Audio mixing uses soft-clipping. SRT latency is minimized.
 
-## Roadmap Overview
-
-| Phase | Description | Status |
-| :--- | :--- | :--- |
-| **Phase 1** | **Re-Architecture & Cleanup** | ✅ Completed |
-| **Phase 2** | **Core Module Development** | ✅ Completed |
-| **Phase 3** | **Integration & Build** | ✅ Completed |
-| **Phase 4** | **Testing & Tuning** | 🟡 In Progress |
-| **Phase 5** | **Deployment (Systemd)** | 🔴 Pending |
-
----
-
-## Task List
-
-### Completed
-- [x] Architecture & Config Schema (`AudioBridge.yaml`).
-- [x] Core Modules (System, Config, Overlay, Bot).
-- [x] **Stream Mixer:** Fixed race conditions and latency accumulation.
-- [x] **SRT output:** Stabilized with `pkt_size=1316` and removed `-re` flag.
-- [x] **Overlay:** Headless Chromium with PulseAudio sink injection.
-
-### Next Steps (Immediate)
-- [ ] **Soft Clipper:** Implement `tanh` based soft-clipping in `mixer.go` to replace hard clipping distortion.
-- [ ] **Deployment:** Verify systemd user service operation on target machine.
-- [ ] **Code Cleanup:** Ensure all comments are in concise technical English.
+### Completed Features
+- [x] **Config:** YAML schema (`AudioBridge.yaml`) implemented.
+- [x] **System:** Pipewire/PulseAudio virtual sink automation.
+- [x] **Stream Mixer:** - [x] Fixed race conditions and latency accumulation.
+    - [x] Implemented `tanh` Soft Clipper for high-quality mixing.
+- [x] **SRT Output:** Optimized with `pkt_size=1316` and removed `-re` flag.
+- [x] **Overlay:** Headless Chromium manager with audio routing.
+- [x] **Bot Logic:** Discord connection handling and owner-only commands.
+- [x] **Deployment:** Systemd user service configured.
 
 ### Known Limitations
-- **Discord Soundboard:** Not supported due to variable packet sizes causing mixer instability.
+- **Discord Soundboard:** Not supported due to variable packet sizes causing mixer instability. Support is deprecated to prioritize voice latency.
