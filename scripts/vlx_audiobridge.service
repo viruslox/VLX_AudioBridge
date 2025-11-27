@@ -1,0 +1,16 @@
+[Unit]
+Description=VLX AudioBridge Service
+After=network.target sound.target pipewire.service
+Requires=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/opt/VLX_AudioBridge/VLX_AudioBridge
+WorkingDirectory=/opt/VLX_AudioBridge/
+Restart=always
+RestartSec=5
+# Ensure XDG_RUNTIME_DIR is set for Pipewire access
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
