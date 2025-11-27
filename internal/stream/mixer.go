@@ -13,21 +13,25 @@ const (
 	MaxBufferLen = 50  // Frame buffer size to mitigate jitter
 )
 
-// Mixer manages audio buffers from multiple users and combines them into a single stream.
 type Mixer struct {
-	userBuffers map[uint32][][]int16 // Map SSRC -> PCM Frame Queue
+	userBuffers map[uint32][][]int16
 	mutex       sync.Mutex
-	mixedOut    chan []byte // Output channel for mixed audio ready for FFmpeg
+	mixedOut    chan []byte
 }
 
 func NewMixer() *Mixer {
 	return &Mixer{
 		userBuffers: make(map[uint32][][]int16),
-		mixedOut:    make(chan []byte, 100),
+		// OTTIMIZZAZIONE LATENZA:
+		// Ridotto da 100 a 10. Un buffer di 100 pacchetti = 2 secondi di ritardo potenziale.
+		// 10 pacchetti = 200ms di buffer, molto più reattivo.
+		mixedOut: make(chan []byte, 10),
 	}
 }
 
-// AddFrame appends a decoded PCM frame to the specific user's buffer.
+// AddFrame standard: accetta pacchetti da 20ms (standard Discord Voice).
+// I pacchetti Soundboard (più grandi) verranno processati solo per i primi 20ms, 
+// ma questo garantisce zero lag per la voce.
 func (m *Mixer) AddFrame(ssrc uint32, data []int16) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -36,53 +40,47 @@ func (m *Mixer) AddFrame(ssrc uint32, data []int16) {
 		m.userBuffers[ssrc] = make([][]int16, 0, MaxBufferLen)
 	}
 
-	// Simple buffer management: drop oldest frame if full to prevent infinite latency accumulation.
 	if len(m.userBuffers[ssrc]) >= MaxBufferLen {
 		m.userBuffers[ssrc] = m.userBuffers[ssrc][1:]
 	}
 
-	// Copy data to prevent race conditions or reference issues.
+	// Copia i dati per stabilità (Race Condition Fix)
 	frameCopy := make([]int16, len(data))
 	copy(frameCopy, data)
 	m.userBuffers[ssrc] = append(m.userBuffers[ssrc], frameCopy)
 }
 
-// StartMixing initializes the 20ms ticker loop to generate the final mixed audio.
 func (m *Mixer) StartMixing(stopChan <-chan struct{}) {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
 	outputFrame := make([]int16, FrameSize*Channels)
-	byteBuffer := make([]byte, FrameSize*Channels*2) // 2 bytes per int16 sample
 
 	for {
 		select {
 		case <-stopChan:
 			return
 		case <-ticker.C:
-			m.mixTick(outputFrame, byteBuffer)
+			m.mixTick(outputFrame)
 		}
 	}
 }
 
-func (m *Mixer) mixTick(out []int16, outBytes []byte) {
+func (m *Mixer) mixTick(out []int16) {
 	m.mutex.Lock()
 
-	// Reset output frame to silence
+	// 1. Reset silence
 	for i := range out {
 		out[i] = 0
 	}
 
-	// Sum samples from all users with available data
+	// 2. Mixing
 	for ssrc, frames := range m.userBuffers {
 		if len(frames) > 0 {
 			currentFrame := frames[0]
-
-			// Mixing: Summation with Hard Clipping
+			// Mix sicuro
 			for i := 0; i < len(out) && i < len(currentFrame); i++ {
 				sum := int32(out[i]) + int32(currentFrame[i])
-
-				// Clamp values to int16 range to prevent digital overflow distortion
 				if sum > 32767 {
 					sum = 32767
 				} else if sum < -32768 {
@@ -90,23 +88,21 @@ func (m *Mixer) mixTick(out []int16, outBytes []byte) {
 				}
 				out[i] = int16(sum)
 			}
-
-			// Remove processed frame from queue
 			m.userBuffers[ssrc] = m.userBuffers[ssrc][1:]
 		}
 	}
 	m.mutex.Unlock()
 
-	// Even if silence, send data to keep FFmpeg stream active and synchronized.
-	// Convert []int16 to []byte (Little Endian)
+	// 3. Allocazione Nuova Slice (Race Condition Fix)
+	outBytes := make([]byte, len(out)*2)
 	for i, sample := range out {
 		binary.LittleEndian.PutUint16(outBytes[i*2:], uint16(sample))
 	}
 
-	// Non-blocking send to output channel.
-	// If buffer is full, drop the frame to avoid blocking the critical mixing loop.
+	// 4. Send non-bloccante
 	select {
 	case m.mixedOut <- outBytes:
 	default:
+		// Se il canale è pieno, droppa il pacchetto per non accumulare ritardo.
 	}
 }
